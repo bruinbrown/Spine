@@ -1,0 +1,28 @@
+﻿FieldId	| NodeId	| SensorId	| Latitude	| Longitude	| LastReceiveTime	| BatteryStatus
+
+CREATE TABLE sensorstate (
+	fieldid ascii,
+	nodeid ascii,
+	sensorid ascii,
+	sensortype ascii,
+	latitude float,
+	longitude float,
+	lastcontacted timestamp,
+	PRIMARY KEY (fieldid, nodeid, sensorid)
+);
+
+CREATE TABLE nodestate (
+	fieldid ascii,
+	nodeid ascii,
+	latitude float,
+	longitude float,
+	battery int,
+	PRIMARY KEY (fieldid, nodeid)
+);
+
+CREATE TABLE fieldstate (
+	fieldid ascii,
+	name ascii,
+	users list<text>,
+	PRIMARY KEY (fieldid)
+);
