@@ -134,7 +134,9 @@ type AuthenticationService () as self =
 type TimeService () as this =
     inherit NancyModule ()
 
-    do this.Get.["/time"] <- fun _ -> box <| Spine.Handy.ToUnixTimestamp (DateTime.UtcNow)
+    do
+        this.Get.["/time"] <- fun (args:obj) -> let dt = DateTime.UtcNow |> Spine.Handy.ToUnixTimestamp
+                                                (dt |> string) :> obj
 
 [<CLIMutable>]
 type FieldDto =
@@ -150,7 +152,7 @@ type SensorMetadata =
       Latitude : float32
       Longitude : float32 }
 
-type FieldService () as this =
+type GetFieldService () as this =
     inherit NancyModule ()
 
     let retrieveFields = fun (args:obj) (token:CancellationToken) ->
@@ -231,3 +233,14 @@ type SensorDataService () as this =
     do
         this.Get.["/field/{fieldid}/{nodeid}/{sensorid}/{starttimestamp?}/{endtimestamp?}", true] <- retrieveSensorData
         this.Get.["/field/{fieldid}/sensors/{sensortype}", true] <- sensorDataForGivenSensorType
+
+type CreateNodeService () as this =
+    inherit NancyModule ()
+
+    let createNode = fun (args:obj) (token:CancellationToken) ->
+        async {
+            return (new Response(StatusCode = HttpStatusCode.OK) :> obj)
+        } |> Async.StartAsTask
+
+    do
+        this.Post.["/field/{fieldid}/{nodeid}", true] <- createNode
