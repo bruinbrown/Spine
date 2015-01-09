@@ -28,8 +28,9 @@ type CustomNancyBootstrapper () =
                            if typ <> "API" then null
                            else
                                try
-                                   let payload = JWT.JsonWebToken.DecodeToObject(value, secretKey) :?> System.Collections.Generic.IDictionary<string,string>
-                                   let username = payload.["sub"]
+                                   let payload = JWT.JsonWebToken.DecodeToObject(value, secretKey)
+                                   let payload = payload :?> System.Collections.Generic.IDictionary<string,obj>
+                                   let username = payload.["sub"].ToString()
                                    { new Nancy.Security.IUserIdentity with
                                          member this.UserName with get () = username
                                          member this.Claims with get () = Seq.empty }
@@ -39,6 +40,13 @@ type CustomNancyBootstrapper () =
         StatelessAuthentication.Enable(pipelines, config)
 
         base.ApplicationStartup(container, pipelines)
+
+    override this.RequestStartup(container, pipelines,context) =
+        let handler = fun (ctx:NancyContext) -> ctx.Response.WithHeader("Access-Control-Allow-Origin", "*")
+                                                            .WithHeader("Access-Control-Allow-Methods", "POST,GET")
+                                                            .WithHeader("Access-Control-Allow-Headers", "Accept, Origin, Content-Type, Authorization") |> ignore
+        pipelines.AfterRequest.AddItemToEndOfPipeline(handler)
+        base.RequestStartup(container, pipelines, context)
 
     override this.ConfigureApplicationContainer(container) =
 

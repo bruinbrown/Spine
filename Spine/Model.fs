@@ -81,7 +81,6 @@ module Configuration =
             let cfg = resultsSet |> Seq.head
             let latitude = cfg.GetValue<float32>("latitude")
             let longitude = cfg.GetValue<float32>("longitude")
-            let battery = cfg.GetValue<int>("batterystatus")
             { Location = Location(latitude, longitude); BatteryStatus = BatteryStatus(100) }
         else
             DefaultNodeConfiguration
@@ -96,7 +95,7 @@ module Configuration =
             let head = resultsSet.GetRows() |> Seq.head
             let latitude = head.GetValue<float32>("latitude")
             let longitude = head.GetValue<float32>("longitude")
-            let lastcontacted = head.GetValue<DateTime>("lastcontacted")
+            let lastcontacted = if head.IsNull("lastcontacted") then DateTime.MinValue else head.GetValue<DateTime>("lastcontacted")
             let sensorType = head.GetValue<string>("sensortype")
             { Location = Location(latitude, longitude); LastContacted = lastcontacted; SensorType = sensorType }
 
@@ -122,53 +121,77 @@ namespace Spine
             let sensorid = mailbox.Self.Path.Name
             let nodeid = mailbox.Self.Path.Parent.Name
             let fieldid = mailbox.Self.Path.Parent.Parent.Name
+            let seriesName = sprintf "%s.%s.%s" fieldid nodeid sensorid
 
             let rec loop (config:SensorConfiguration) = actor {
                 let! msg = mailbox.Receive ()
                 let state = match msg with
-                            | SetLocation (loc) -> { config with Location = loc }
+                            | SetLocation (loc) -> let state = { config with Location = loc }
+                                                   let query = sprintf "INSERT INTO sensorstate (fieldid, nodeid, sensorid, latitude, longitude) VALUES ('%s', '%s', '%s', %f, %f)" fieldid nodeid sensorid <|| (let (Spine.Model.Location(lat,lng)) = state.Location in lat, lng)
+                                                   Spine.Configuration.Session.Execute(query) |> ignore
+                                                   state
                             | Measurement(reading) -> let (Spine.Model.Location (lat,lng)) = config.Location
-                                                      let columns = ["time"; "value"; "fieldid"; "nodeid"; "sensorid"; "sensortype"; "latitude"; "longitude"]
-                                                      let values = [ box reading.Timestamp; box reading.Value; fieldid :> obj; nodeid :> obj; sensorid :> obj; config.SensorType :> obj; box lat; box lng]
-                                                      let points = [{ name = "fieldreadings"; columns = columns; points = [values] }]
+                                                      let columns = ["time"; "value"; "sensortype"]
+                                                      let values = [ box reading.Timestamp; box reading.Value; config.SensorType :> obj]
+                                                      let points = [{ name = seriesName; columns = columns; points = [values] }]
                                                                    |> Newtonsoft.Json.JsonConvert.SerializeObject
-                                                      let resp = createRequest Post "http://178.62.84.55:8086/db/sensorsaurus/series?u=root&p=root"
+                                                      let resp = createRequest Post "http://178.62.84.55:8086/db/sensorsaurus/series?u=root&p=root&time_precision=s"
                                                                  |> withBody points
                                                                  |> getResponse
                                                       { config with LastContacted = System.DateTime.UtcNow }
                                                                
                 return! loop state
             }
-
+            printfn "Spawning sensor of id: %s/%s/%s" fieldid nodeid sensorid
             let config = LoadSensorStateFromCassandra fieldid nodeid sensorid
-            let config = if config.SensorType = "" then { config with SensorType = sensorType } else config
+            let config = if config.SensorType = "" then 
+                             let points = [{ name = seriesName; columns = ["time"; "value"; "sensortype"]; points = [[box 0 ; box 0.0; box sensorType]] }]
+                                                                   |> Newtonsoft.Json.JsonConvert.SerializeObject
+                             let resp = createRequest Post "http://178.62.84.55:8086/db/sensorsaurus/series?u=root&p=root&time_precision=s"
+                                        |> withBody points
+                                        |> getResponse
+                             { config with SensorType = sensorType } 
+                         else config
             loop config
         
         let NodeActor (mailbox:Actor<NodeMessage>) =
-            //TODO: Implement the actor messages
+            let nodeid = mailbox.Self.Path.Name
+            let fieldid = mailbox.Self.Path.Parent.Name
             let rec loop state = actor {
                 let! msg = mailbox.Receive ()
                 let state = match msg with
                             | NodeMessage.SensorsAvailable(sensors) -> let children = mailbox.Context.GetChildren()
-                                                                                      |> Seq.map (fun t -> { SensorId = t.Path.Name; SensorType = ""; })
+                                                                                      |> Seq.map (fun t -> t.Path.Name)
                                                                                       |> Set.ofSeq
+                                                                       let s = sensors.Sensors
+                                                                               |> Seq.map (fun t -> t.SensorId, t.SensorType)
+                                                                               |> Map.ofSeq
                                                                        let sensors = sensors.Sensors
+                                                                                     |> Seq.map (fun t -> t.SensorId)
                                                                                      |> Set.ofSeq
                                                                        let toSpawn = Set.difference sensors children
+                                                                                     |> Set.map (fun t -> { SensorId = t; SensorType = s.[t] })
+
+                                                                       printfn "Spawning: %A" toSpawn
                                                                        toSpawn
-                                                                       |> Set.iter (fun t -> mailbox.spawn t.SensorId (SensorActor t.SensorType) |> ignore)
+                                                                       |> Set.iter (fun t -> mailbox.spawn t.SensorId (SensorActor t.SensorType) |> ignore
+                                                                                             let query = sprintf "INSERT INTO sensorstate (fieldid, nodeid, sensorid, sensortype, latitude, longitude) VALUES('%s', '%s', '%s', '%s', %f, %f)" fieldid nodeid t.SensorId t.SensorType <|| (let (Spine.Model.Location(lat,lng)) = state.Location in lat,lng)
+                                                                                             Spine.Configuration.Session.Execute(query) |> ignore)
                                                                        state
                             | NodeMessage.SetBatteryStatus(status) -> { state with BatteryStatus = status }
                             | NodeMessage.SetLocation(location) -> mailbox.Context.GetChildren()
                                                                    |> Seq.iter (fun t -> t <! SensorMessage.SetLocation(location))
-                                                                   { state with Location = location }
+                                                                   let state = { state with Location = location }
+                                                                   let query = sprintf "INSERT INTO nodestate (fieldid, nodeid, latitude, longitude) VALUES ('%s', '%s', %f, %f)" fieldid nodeid <|| (let (Spine.Model.Location(lat, lng)) = state.Location in lat, lng)
+                                                                   Spine.Configuration.Session.Execute(query) |> ignore
+                                                                   state
                 return! loop state
             }
             let nodeid = mailbox.Self.Path.Name
             let fieldid = mailbox.Self.Path.Parent.Name
 
             let query = sprintf "SELECT sensorid, sensortype FROM sensorstate WHERE fieldid = '%s' and nodeid = '%s'" fieldid nodeid
-            let results = Spine.Configuration.Session.Execute(query)
+            let results = Spine.Configuration.Session.Execute(query) |> Seq.toList
             results
             |> Seq.iter (fun t -> let sensor = t.GetValue<string>("sensorid")
                                   let sensorType = t.GetValue<string>("sensortype")
@@ -191,8 +214,8 @@ namespace Spine
 
             printfn "Loading a field"
 
-            let query = sprintf "SELECT nodeid FROM sensorstate WHERE fieldid = '%s'" fieldid
-            let results = Spine.Configuration.Session.Execute(query)
+            let query = sprintf "SELECT nodeid FROM nodestate WHERE fieldid = '%s'" fieldid
+            let results = Spine.Configuration.Session.Execute(query) |> Seq.toList
             results 
             |> Seq.iter (fun t -> let node = t.GetValue<string>("nodeid")
                                   mailbox.spawn node NodeActor |> ignore)

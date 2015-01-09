@@ -11,6 +11,8 @@ CREATE TABLE sensorstate (
 	PRIMARY KEY (fieldid, nodeid, sensorid)
 );
 
+INSERT INTO sensorstate (fieldid, nodeid, sensorid, sensortype, latitude, longitude, lastcontacted) VALUES ('testfield', 'testnode', 'testsensor', 'temp', -1.2, 52.4, dateof(now()));
+
 CREATE TABLE nodestate (
 	fieldid ascii,
 	nodeid ascii,
@@ -20,9 +22,33 @@ CREATE TABLE nodestate (
 	PRIMARY KEY (fieldid, nodeid)
 );
 
+INSERT INTO nodestate (fieldid, nodeid, latitude, longitude, battery) VALUES ('testfield', 'testnode', -1.2, 52.4, 100);
+
 CREATE TABLE fieldstate (
 	fieldid ascii,
 	name ascii,
 	users list<text>,
 	PRIMARY KEY (fieldid)
+);
+
+CREATE INDEX field_usersindex ON fieldstate(users);
+
+CREATE TABLE configurationmessages (
+	fieldid ascii,
+	messageid uuid,
+	payload ascii,
+	logged int,
+	PRIMARY KEY (fieldid, logged, messageid)
+);
+
+SELECT * FROM configurationmessages WHERE fieldid = 'testfield' AND logged > 1415664000;
+
+CREATE INDEX configurationmessages_logged ON configurationmessages(logged);
+
+CREATE TABLE userregistrations (
+	username ascii,
+	email ascii,
+	hash ascii,
+	cycles int,
+	PRIMARY KEY (username)
 );

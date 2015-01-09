@@ -14,11 +14,15 @@ let main argv =
 
     let system = Spine.ActorSystem.System
 
-    let testField = spawn system "testfield" FieldActor
+    let fields = Spine.Configuration.Session.Execute("SELECT * FROM fieldstate")
+                 |> Seq.iter (fun t -> let fieldid = t.GetValue<string>("fieldid")
+                                       spawn system fieldid FieldActor |> ignore)
 
     System.Threading.Thread.Sleep 10000
 
-    use host = new NancyHost(new Uri("http://localhost:8888"))
+    let uri = "http://localhost:8888"
+
+    use host = new NancyHost(new Uri("http://178.62.84.55:8888"))
     host.Start()
 
     printfn "Started the web service"
